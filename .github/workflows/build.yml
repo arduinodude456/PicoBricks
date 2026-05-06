@@ -1,0 +1,64 @@
+name: Build Hollyhock Addin (cloud)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-toolchain-and-addin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git wget python3 make cmake bison flex texinfo libgmp-dev libmpfr-dev libmpc-dev libisl-dev
+
+    - name: Clone sh-gcc-toolchain (source)
+      run: |
+        git clone https://github.com/andwn/sh-gcc-toolchain.git toolchain-src
+        ls -la toolchain-src
+
+    - name: Build toolchain (fast defaults)
+      working-directory: toolchain-src
+      run: |
+        # Verwende moderate Parallelität; das Skript lädt Quellen und baut GCC/Binutils/Newlib.
+        # Wenn das Repo spezielle Make-Targets hat, passe hier an.
+        make -j2
+        # Install in temporäres Verzeichnis
+        mkdir -p /tmp/sh-toolchain
+        sudo make install INSTALL_DIR=/tmp/sh-toolchain || true
+        ls -la /tmp/sh-toolchain/bin || true
+
+    - name: Add toolchain to PATH
+      run: |
+        echo "/tmp/sh-toolchain/bin" >> $GITHUB_PATH
+
+    - name: Show toolchain version
+      run: |
+        if command -v sh-elf-gcc >/dev/null 2>&1; then sh-elf-gcc --version; else echo "sh-elf-gcc not found"; fi
+
+    - name: Build Hollyhock demo (snake)
+      working-directory: ${{ github.workspace }}
+      run: |
+        # Set SDK_DIR falls nötig (passe Pfad an, falls SDK in repo an anderer Stelle liegt)
+        export SDK_DIR="${{ github.workspace }}/sdk"
+        cd demos/snake || exit 1
+        make -j2 || (cat build/Makefile || true; exit 1)
+        ls -la build || true
+
+    - name: Upload built addin
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: hollyhock-addins
+        path: |
+          demos/snake/build/*.c2a
+          demos/*/build/*.c2a
